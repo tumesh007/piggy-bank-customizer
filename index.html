@@ -8,6 +8,7 @@
     <!-- Dependencies via CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/STLExporter.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 
@@ -124,7 +125,7 @@
             border: 1px solid var(--border);
             border-radius: 6px;
             color: #fff;
-            font-size: 13px;
+            font-size: 14px;
             outline: none;
             transition: border-color 0.2s;
         }
@@ -195,6 +196,17 @@
             background: rgba(248, 81, 73, 0.15);
             color: var(--danger);
             border-color: rgba(248, 81, 73, 0.3);
+        }
+        .source-tag {
+            grid-column: span 2;
+            font-size: 10px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid var(--border);
+            padding-top: 6px;
+            margin-top: 2px;
         }
         .note-box {
             background: rgba(0, 174, 66, 0.08);
@@ -363,6 +375,10 @@
                     <span>32.0 × 4.2 mm</span>
                 </div>
                 <div class="fit-pill" id="fitPill">✓ 100% Fits A1 Mini (10.5 mm Bed Margin)</div>
+                <div class="source-tag">
+                    <span>3D Render Engine:</span>
+                    <span id="renderSource" style="color:var(--accent);font-weight:600;">Authentic OpenSCAD STL</span>
+                </div>
             </div>
 
             <!-- Slicing Pro-Tip -->
@@ -398,6 +414,14 @@
         let scene, camera, renderer, controls;
         let modelGroup, bedGrid, bedOutline;
         let fugazFont = null;
+        let stlLoader = null;
+
+        const VERIFIED_MODELS = {
+            "SHIVANSH": { body: "Shivansh_Body.stl", plate: "Shivansh_Front_Plate.stl", w: 169.5, h: 50.0 },
+            "LUVISH":   { body: "Luvish_Body.stl",   plate: "Luvish_Front_Plate.stl",   w: 155.5, h: 52.2 },
+            "JANICE":   { body: "Janice_Body.stl",   plate: "Janice_Front_Plate.stl",   w: 155.5, h: 52.2 },
+            "NIVAAN":   { body: "Nivaan_Body.stl",   plate: "Nivaan_Front_Plate.stl",   w: 155.5, h: 51.8 }
+        };
 
         function base64ToArrayBuffer(base64) {
             const binary_string = window.atob(base64);
@@ -416,6 +440,8 @@
             } catch (err) {
                 console.error("Error loading embedded Fugaz font:", err);
             }
+
+            stlLoader = new THREE.STLLoader();
 
             const container = document.getElementById('viewport-container');
             const canvas = document.getElementById('canvas3d');
@@ -436,15 +462,15 @@
             controls.maxPolarAngle = Math.PI / 2 + 0.1;
 
             // Lighting
-            const ambient = new THREE.AmbientLight(0xffffff, 0.65);
+            const ambient = new THREE.AmbientLight(0xffffff, 0.7);
             scene.add(ambient);
 
             const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
-            keyLight.position.set(60, 120, 80);
+            keyLight.position.set(60, 140, 90);
             keyLight.castShadow = true;
             scene.add(keyLight);
 
-            const fillLight = new THREE.DirectionalLight(0xa5c4f5, 0.4);
+            const fillLight = new THREE.DirectionalLight(0xa5c4f5, 0.45);
             fillLight.position.set(-60, 40, -60);
             scene.add(fillLight);
 
@@ -520,27 +546,71 @@
             update3DModel();
         }
 
-        function createContouredShape(w, h, baseY, topY, radius = 14) {
+        function clearModelGroup() {
+            while(modelGroup.children.length > 0) {
+                const obj = modelGroup.children[0];
+                if (obj.geometry) obj.geometry.dispose();
+                modelGroup.remove(obj);
+            }
+        }
+
+        // Convert individual glyph to THREE.Shapes (ensures 100% of letters and cutouts are visible)
+        function getCharShapes(glyph, size) {
+            const p = glyph.getPath(0, 0, size);
+            const sp = new THREE.ShapePath();
+            p.commands.forEach(cmd => {
+                if (cmd.type === 'M') sp.moveTo(cmd.x, -cmd.y);
+                else if (cmd.type === 'L') sp.lineTo(cmd.x, -cmd.y);
+                else if (cmd.type === 'Q') sp.quadraticCurveTo(cmd.x1, -cmd.y1, cmd.x, -cmd.y);
+                else if (cmd.type === 'C') sp.bezierCurveTo(cmd.x1, -cmd.y1, cmd.x2, -cmd.y2, cmd.x, -cmd.y);
+            });
+            // TrueType fonts use Clockwise outer paths. In Three.js, isCCW=false treats CW as outer solid loops!
+            return sp.toShapes(false);
+        }
+
+        // Creates the scalloped creased piggy bank contour around letters
+        function createCreasedPiggyShape(charPositions, textScale, bubbleSize, baseY) {
             const shape = new THREE.Shape();
-            const halfW = w / 2;
-            const cornerR = Math.min(radius, 10);
-            
-            // Bottom flat floor
-            shape.moveTo(-halfW + cornerR, baseY);
+            const N = charPositions.length;
+            const halfW = (charPositions[N - 1].x + charPositions[N - 1].w / 2 + bubbleSize);
+            const startX = (charPositions[0].x - charPositions[0].w / 2 - bubbleSize);
+            const cornerR = 8;
+            const domePeakY = (textScale * 0.45) + bubbleSize;
+            const creaseY = domePeakY - 5.5; // Dip between letters forms the iconic crease!
+
+            // Bottom standing base (Flat)
+            shape.moveTo(startX + cornerR, baseY);
             shape.lineTo(halfW - cornerR, baseY);
             shape.quadraticCurveTo(halfW, baseY, halfW, baseY + cornerR);
-            
-            // Right wall
-            shape.lineTo(halfW, topY - radius);
-            shape.quadraticCurveTo(halfW, topY, halfW - radius, topY);
-            
-            // Top arched roof
-            shape.lineTo(-halfW + radius, topY);
-            shape.quadraticCurveTo(-halfW, topY, -halfW, topY - radius);
-            
-            // Left wall
-            shape.lineTo(-halfW, baseY + cornerR);
-            shape.quadraticCurveTo(-halfW, baseY, -halfW + cornerR, baseY);
+
+            // Right side up
+            const rightPeakY = domePeakY - 2;
+            shape.lineTo(halfW, rightPeakY - 10);
+            shape.quadraticCurveTo(halfW, rightPeakY, halfW - 4, rightPeakY);
+
+            // Top undulating scallops (creates creases between letters from right to left)
+            for (let i = N - 1; i >= 0; i--) {
+                const cp = charPositions[i];
+                const letterPeakX = cp.x;
+                const letterLeftX = cp.x - (cp.w / 2);
+                
+                // Curve over letter peak
+                shape.lineTo(letterPeakX, domePeakY);
+                
+                // If there is an adjacent letter on the left, dip into the crease!
+                if (i > 0) {
+                    const nextCp = charPositions[i - 1];
+                    const creaseX = (cp.x + nextCp.x) / 2;
+                    shape.quadraticCurveTo(letterLeftX, creaseY + 1, creaseX, creaseY);
+                }
+            }
+
+            // Left side down
+            shape.lineTo(startX + 4, rightPeakY);
+            shape.quadraticCurveTo(startX, rightPeakY, startX, rightPeakY - 10);
+            shape.lineTo(startX, baseY + cornerR);
+            shape.quadraticCurveTo(startX, baseY, startX + cornerR, baseY);
+
             return shape;
         }
 
@@ -557,56 +627,122 @@
             document.getElementById('valDepth').innerText = depth + " mm";
             document.getElementById('valRaise').innerText = raise.toFixed(1) + " mm";
 
-            // Clear existing meshes
-            while(modelGroup.children.length > 0) {
-                const obj = modelGroup.children[0];
-                if (obj.geometry) obj.geometry.dispose();
-                modelGroup.remove(obj);
+            clearModelGroup();
+
+            // Materials
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.5, metalness: 0.1 });
+            const plateMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.35, metalness: 0.1 });
+            const letterMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.25, metalness: 0.2 });
+            const stopperMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, roughness: 0.4 });
+
+            // CHECK: Is this one of the verified pre-compiled models?
+            const modelKey = name.toUpperCase();
+            const isVerified = (profile === "A1_Mini" && VERIFIED_MODELS[modelKey]);
+
+            if (isVerified && (part === "assembly" || part === "body" || part === "front_plate" || part === "stopper" || part === "stoppers_batch")) {
+                document.getElementById('renderSource').innerText = "Authentic OpenSCAD STL (100% Exact)";
+                const mData = VERIFIED_MODELS[modelKey];
+                
+                document.getElementById('statWidth').innerText = mData.w.toFixed(1) + " mm";
+                document.getElementById('statHeight').innerText = mData.h.toFixed(1) + " mm";
+                document.getElementById('statDepth').innerText = "45.0 mm";
+                document.getElementById('fitPill').className = "fit-pill";
+                document.getElementById('fitPill').innerText = `✓ 100% Fits A1 Mini (${(180 - mData.w).toFixed(1)} mm Bed Margin)`;
+
+                if (part === "assembly") {
+                    // Load exact Body STL and Front Plate STL positioned together
+                    stlLoader.load(`./models/${mData.body}`, function (geom) {
+                        geom.computeVertexNormals();
+                        const bMesh = new THREE.Mesh(geom, bodyMat);
+                        // Rotate to stand upright on flat floor
+                        bMesh.rotation.x = Math.PI / 2;
+                        bMesh.position.set(0, 25, 0);
+                        modelGroup.add(bMesh);
+                    });
+                    stlLoader.load(`./models/${mData.plate}`, function (geom) {
+                        geom.computeVertexNormals();
+                        const pMesh = new THREE.Mesh(geom, plateMat);
+                        pMesh.rotation.x = Math.PI / 2;
+                        pMesh.position.set(0, 25, -45 + 2.5);
+                        modelGroup.add(pMesh);
+                    });
+                    return;
+                }
+
+                if (part === "body") {
+                    stlLoader.load(`./models/${mData.body}`, function (geom) {
+                        geom.computeVertexNormals();
+                        const bMesh = new THREE.Mesh(geom, bodyMat);
+                        // Lies flat on its back at Z=0
+                        bMesh.position.set(0, 0, 0);
+                        modelGroup.add(bMesh);
+                    });
+                    return;
+                }
+
+                if (part === "front_plate") {
+                    stlLoader.load(`./models/${mData.plate}`, function (geom) {
+                        geom.computeVertexNormals();
+                        const pMesh = new THREE.Mesh(geom, plateMat);
+                        pMesh.position.set(0, 0, 0);
+                        modelGroup.add(pMesh);
+                    });
+                    return;
+                }
+
+                if (part === "stopper") {
+                    stlLoader.load(`./models/Stopper.stl`, function (geom) {
+                        geom.computeVertexNormals();
+                        const sMesh = new THREE.Mesh(geom, stopperMat);
+                        sMesh.position.set(0, -25, 0);
+                        modelGroup.add(sMesh);
+                    });
+                    return;
+                }
+
+                if (part === "stoppers_batch") {
+                    stlLoader.load(`./models/Stoppers_Batch_x4.stl`, function (geom) {
+                        geom.computeVertexNormals();
+                        const sbMesh = new THREE.Mesh(geom, stopperMat);
+                        sbMesh.position.set(0, -25, 0);
+                        modelGroup.add(sbMesh);
+                    });
+                    return;
+                }
             }
 
-            // Target dimensions
+            // DYNAMIC PROCEDURAL GENERATION (With real creases and individual 3D glyphs)
+            document.getElementById('renderSource').innerText = "Dynamic Creased 3D Engine";
             const maxBed = (profile === "A1_Mini") ? 180 : 256;
             const textScale = (profile === "A1_Mini") ? Math.min(25.0, 130.0 / (0.75 * (name.length - 1) + 1.0)) : 50.0;
             const bubbleSize = (profile === "A1_Mini") ? 14.0 : 20.0;
             const baseY = (profile === "A1_Mini") ? -25.0 : -40.0;
-            const topY = textScale * 0.5 + bubbleSize;
 
-            let textWidth = name.length * textScale * 0.65;
-            let textHeight = textScale;
-            let textShapes = null;
+            // 1. Measure and position each individual glyph
+            const charPositions = [];
+            let totalTextWidth = 0;
+            const glyphs = [];
 
-            // Generate authentic 3D text glyph shapes using Fugaz One font
             if (fugazFont) {
-                try {
-                    const fontPath = fugazFont.getPath(name, 0, 0, textScale);
-                    const box = fontPath.getBoundingBox();
-                    textWidth = Math.max(20, box.x2 - box.x1);
-                    textHeight = Math.max(10, box.y2 - box.y1);
-                    const textCenterX = (box.x1 + box.x2) / 2;
-                    const textCenterY = (box.y1 + box.y2) / 2;
-
-                    const shapePath = new THREE.ShapePath();
-                    fontPath.commands.forEach(cmd => {
-                        const x = (cmd.x !== undefined) ? (cmd.x - textCenterX) : 0;
-                        const y = (cmd.y !== undefined) ? (-cmd.y + textCenterY) : 0;
-                        const x1 = (cmd.x1 !== undefined) ? (cmd.x1 - textCenterX) : 0;
-                        const y1 = (cmd.y1 !== undefined) ? (-cmd.y1 + textCenterY) : 0;
-                        const x2 = (cmd.x2 !== undefined) ? (cmd.x2 - textCenterX) : 0;
-                        const y2 = (cmd.y2 !== undefined) ? (-cmd.y2 + textCenterY) : 0;
-
-                        if (cmd.type === 'M') shapePath.moveTo(x, y);
-                        else if (cmd.type === 'L') shapePath.lineTo(x, y);
-                        else if (cmd.type === 'Q') shapePath.quadraticCurveTo(x1, y1, x, y);
-                        else if (cmd.type === 'C') shapePath.bezierCurveTo(x1, y1, x2, y2, x, y);
-                    });
-                    textShapes = shapePath.toShapes(true);
-                } catch(e) {
-                    console.error("Font path generation error:", e);
+                let currentX = 0;
+                for (let i = 0; i < name.length; i++) {
+                    const char = name[i];
+                    const glyph = fugazFont.charToGlyph(char);
+                    glyphs.push(glyph);
+                    const gw = (glyph.advanceWidth || 1000) * (textScale / fugazFont.unitsPerEm);
+                    charPositions.push({ char: char, x: currentX + (gw / 2), w: gw });
+                    currentX += gw;
                 }
+                totalTextWidth = currentX;
+                // Center text around X = 0
+                const offsetX = totalTextWidth / 2;
+                charPositions.forEach(cp => { cp.x -= offsetX; });
+            } else {
+                totalTextWidth = name.length * textScale * 0.7;
             }
 
-            const bodyWidth = textWidth + (bubbleSize * 2);
-            const bodyHeight = topY - baseY;
+            const bodyWidth = totalTextWidth + (bubbleSize * 2);
+            const bodyHeight = (textScale * 0.45) + bubbleSize - baseY;
 
             document.getElementById('statWidth').innerText = bodyWidth.toFixed(1) + " mm";
             document.getElementById('statHeight').innerText = bodyHeight.toFixed(1) + " mm";
@@ -622,35 +758,11 @@
                 fitPill.innerText = `⚠️ Exceeds Bed by ${Math.abs(margin).toFixed(1)} mm! Rotate 45°`;
             }
 
-            // Material Palette
-            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.45, metalness: 0.1 });
-            const plateMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.35, metalness: 0.1 });
-            const letterMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.25, metalness: 0.2 });
-            const stopperMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, roughness: 0.4 });
+            // Create true scalloped creased body shape
+            const creasedShape = createCreasedPiggyShape(charPositions, textScale, bubbleSize, baseY);
 
-            // 1. MAIN BODY (Contoured Shell with cavity and coin slot)
             if (part === "assembly" || part === "body") {
-                const outerShape = createContouredShape(bodyWidth, bodyHeight, baseY, topY, bubbleSize);
-                
-                // Cut internal cavity hole in the front
-                const wall = 3.5;
-                const holeShape = new THREE.Path();
-                const innerW = bodyWidth - (wall * 2);
-                const innerH = bodyHeight - (wall * 2);
-                const inBaseY = baseY + 4.0;
-                const inTopY = topY - wall;
-                holeShape.moveTo(-innerW/2 + 8, inBaseY);
-                holeShape.lineTo(innerW/2 - 8, inBaseY);
-                holeShape.quadraticCurveTo(innerW/2, inBaseY, innerW/2, inBaseY + 8);
-                holeShape.lineTo(innerW/2, inTopY - 10);
-                holeShape.quadraticCurveTo(innerW/2, inTopY, innerW/2 - 10, inTopY);
-                holeShape.lineTo(-innerW/2 + 10, inTopY);
-                holeShape.quadraticCurveTo(-innerW/2, inTopY, -innerW/2, inTopY - 10);
-                holeShape.lineTo(-innerW/2, inBaseY + 8);
-                holeShape.quadraticCurveTo(-innerW/2, inBaseY, -innerW/2 + 8, inBaseY);
-
-                // Body extruded
-                const bodyGeo = new THREE.ExtrudeGeometry(outerShape, {
+                const bodyGeo = new THREE.ExtrudeGeometry(creasedShape, {
                     depth: depth,
                     bevelEnabled: true,
                     bevelSegments: 2,
@@ -661,7 +773,6 @@
                 const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
 
                 if (part === "body") {
-                    // Bed-contact orientation: flat on its back at Z=0
                     bodyMesh.rotation.x = -Math.PI / 2;
                     bodyMesh.position.set(0, -25, 0);
                 } else {
@@ -669,31 +780,23 @@
                 }
                 modelGroup.add(bodyMesh);
 
-                // Coin Slot on top ridge
-                const slotGeo = new THREE.BoxGeometry(32, 4.2, 10);
+                // Coin slot on top
+                const slotGeo = new THREE.BoxGeometry(32, 4.2, 8);
                 const slotMat = new THREE.MeshBasicMaterial({ color: 0x0a0c10 });
                 const slotMesh = new THREE.Mesh(slotGeo, slotMat);
+                const topRidgeY = (textScale * 0.45) + bubbleSize;
                 if (part === "body") {
                     slotMesh.rotation.x = -Math.PI / 2;
-                    slotMesh.position.set(0, -25 + (depth / 2), topY);
+                    slotMesh.position.set(0, -25 + (depth / 2), topRidgeY);
                 } else {
-                    slotMesh.position.set(0, topY, 0);
+                    slotMesh.position.set(0, topRidgeY, 0);
                 }
                 modelGroup.add(slotMesh);
             }
 
-            // 2. FRONT PLATE & REAL 3D TEXT
             if (part === "assembly" || part === "front_plate") {
                 const plateThick = 2.5;
-                const plateW = bodyWidth - 3.5;
-                const plateBaseY = baseY + 2.5;
-                const plateTopY = topY - 1.8;
-                
-                const plateShape = createContouredShape(plateW, plateTopY - plateBaseY, plateBaseY, plateTopY, bubbleSize - 2);
-                const plateGeo = new THREE.ExtrudeGeometry(plateShape, {
-                    depth: plateThick,
-                    bevelEnabled: false
-                });
+                const plateGeo = new THREE.ExtrudeGeometry(creasedShape, { depth: plateThick, bevelEnabled: false });
                 const plateMesh = new THREE.Mesh(plateGeo, plateMat);
 
                 if (part === "front_plate") {
@@ -704,29 +807,33 @@
                 }
                 modelGroup.add(plateMesh);
 
-                // Real Extruded 3D Text
-                if (textShapes) {
-                    const textGeo = new THREE.ExtrudeGeometry(textShapes, {
-                        depth: raise,
-                        bevelEnabled: true,
-                        bevelSegments: 2,
-                        steps: 1,
-                        bevelSize: 0.25,
-                        bevelThickness: 0.25
-                    });
-                    const textMesh = new THREE.Mesh(textGeo, letterMat);
-
-                    if (part === "front_plate") {
-                        textMesh.rotation.x = -Math.PI / 2;
-                        textMesh.position.set(0, -25 + plateThick, 0);
-                    } else {
-                        textMesh.position.set(0, 0, (depth / 2));
+                // Render each letter independently (guarantees 100% visibility of all characters and cutouts)
+                if (fugazFont && glyphs.length > 0) {
+                    for (let i = 0; i < charPositions.length; i++) {
+                        const cp = charPositions[i];
+                        const charShapes = getCharShapes(glyphs[i], textScale);
+                        if (charShapes && charShapes.length > 0) {
+                            const charGeo = new THREE.ExtrudeGeometry(charShapes, {
+                                depth: raise,
+                                bevelEnabled: true,
+                                bevelSegments: 2,
+                                steps: 1,
+                                bevelSize: 0.2,
+                                bevelThickness: 0.2
+                            });
+                            const charMesh = new THREE.Mesh(charGeo, letterMat);
+                            if (part === "front_plate") {
+                                charMesh.rotation.x = -Math.PI / 2;
+                                charMesh.position.set(cp.x - (cp.w / 2), -25 + plateThick, 0);
+                            } else {
+                                charMesh.position.set(cp.x - (cp.w / 2), 0, (depth / 2));
+                            }
+                            modelGroup.add(charMesh);
+                        }
                     }
-                    modelGroup.add(textMesh);
                 }
             }
 
-            // 3. TWIST & LOCK STOPPER CAP
             if (part === "stopper") {
                 const capGeo = new THREE.CylinderGeometry(19, 19, 2.5, 48);
                 const capMesh = new THREE.Mesh(capGeo, stopperMat);
@@ -737,26 +844,8 @@
                 const plugMesh = new THREE.Mesh(plugGeo, stopperMat);
                 plugMesh.position.set(0, -25 + 4.0, 0);
                 modelGroup.add(plugMesh);
-
-                // 3 locking tabs
-                for (let a = 0; a < 3; a++) {
-                    const tabGeo = new THREE.BoxGeometry(3.5, 2.0, 7.5);
-                    const tabMesh = new THREE.Mesh(tabGeo, stopperMat);
-                    const angle = a * (Math.PI * 2 / 3);
-                    tabMesh.position.set(Math.cos(angle) * 13.5, -25 + 5.2, Math.sin(angle) * 13.5);
-                    tabMesh.rotation.y = -angle;
-                    modelGroup.add(tabMesh);
-                }
-
-                // Coin turn slot on top
-                const turnSlotGeo = new THREE.BoxGeometry(20, 3.5, 1.5);
-                const turnSlotMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
-                const turnSlotMesh = new THREE.Mesh(turnSlotGeo, turnSlotMat);
-                turnSlotMesh.position.set(0, -25 + 0.75, 0);
-                modelGroup.add(turnSlotMesh);
             }
 
-            // 4. STOPPERS 4x BATCH
             if (part === "stoppers_batch") {
                 for (let ix of [-25, 25]) {
                     for (let iz of [-25, 25]) {
@@ -764,11 +853,6 @@
                         const capMesh = new THREE.Mesh(capGeo, stopperMat);
                         capMesh.position.set(ix, -25 + 1.25, iz);
                         modelGroup.add(capMesh);
-
-                        const plugGeo = new THREE.CylinderGeometry(12.75, 12.75, 5.5, 48);
-                        const plugMesh = new THREE.Mesh(plugGeo, stopperMat);
-                        plugMesh.position.set(ix, -25 + 4.0, iz);
-                        modelGroup.add(plugMesh);
                     }
                 }
             }
@@ -780,9 +864,9 @@
             const name = (casing === "UPPERCASE") ? rawName.toUpperCase() : rawName;
             const part = document.getElementById('selectPart').value;
 
-            // Direct download of verified pre-rendered STLs if matching standard children
-            const verifiedNames = ["SHIVANSH", "LUVISH", "JANICE", "NIVAAN"];
-            if (verifiedNames.includes(name) && (part === "body" || part === "front_plate" || part === "stopper" || part === "stoppers_batch")) {
+            // Direct download of verified pre-rendered STLs
+            const modelKey = name.toUpperCase();
+            if (VERIFIED_MODELS[modelKey] && (part === "body" || part === "front_plate" || part === "stopper" || part === "stoppers_batch")) {
                 let filename = "";
                 const title = name.charAt(0) + name.slice(1).toLowerCase();
                 if (part === "body") filename = `${title}_Body.stl`;
@@ -797,7 +881,7 @@
                 return;
             }
 
-            // Client-side STL export for ANY custom name
+            // Dynamic STL export for custom names
             const exporter = new THREE.STLExporter();
             const result = exporter.parse(modelGroup, { binary: true });
             const blob = new Blob([result], { type: 'application/octet-stream' });
