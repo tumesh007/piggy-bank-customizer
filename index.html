@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parametric Piggy Bank Studio | Bambu Lab A1 Mini & Standard</title>
+    
+    <!-- Dependencies via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/STLExporter.js"></script>
+
+    <style>
+        :root {
+            --bg-primary: #121418;
+            --bg-secondary: #1a1e24;
+            --bg-panel: rgba(26, 30, 36, 0.96);
+            --accent: #f5a623;
+            --accent-hover: #ffb845;
+            --text-main: #f0f2f5;
+            --text-muted: #8b949e;
+            --border: #2d333b;
+            --bambu-green: #00ae42;
+            --danger: #f85149;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+        }
+        #sidebar {
+            width: 410px;
+            background: var(--bg-panel);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+            box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+            backdrop-filter: blur(12px);
+        }
+        .header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(245, 166, 35, 0.08) 0%, transparent 100%);
+        }
+        .header h1 {
+            font-size: 17px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #fff;
+        }
+        .header .subtitle {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 3px;
+        }
+        .badge {
+            display: inline-block;
+            font-size: 10px;
+            padding: 2px 7px;
+            border-radius: 4px;
+            background: var(--bambu-green);
+            color: #fff;
+            font-weight: 600;
+            margin-left: auto;
+        }
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 14px 18px;
+        }
+        .content::-webkit-scrollbar {
+            width: 6px;
+        }
+        .content::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+        .section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-muted);
+            font-weight: 700;
+            margin: 14px 0 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .section-title:first-child {
+            margin-top: 0;
+        }
+        .preset-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+        .btn-preset {
+            padding: 7px 4px;
+            font-size: 11px;
+            font-weight: 600;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: center;
+        }
+        .btn-preset:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .btn-preset.active {
+            background: rgba(245, 166, 35, 0.15);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .form-group {
+            margin-bottom: 11px;
+        }
+        .form-group label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+        .form-group label span.val {
+            color: var(--accent);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-weight: 600;
+        }
+        input[type="text"], select {
+            width: 100%;
+            padding: 8px 10px;
+            background: #0d1014;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus, select:focus {
+            border-color: var(--accent);
+        }
+        input[type="range"] {
+            width: 100%;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+        .stats-card {
+            background: #0d1014;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-top: 10px;
+            font-size: 11px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 10px;
+        }
+        .stats-item span:first-child {
+            color: var(--text-muted);
+            display: block;
+            font-size: 10px;
+        }
+        .stats-item span:last-child {
+            font-family: ui-monospace, monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .fit-pill {
+            grid-column: span 2;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-align: center;
+            margin-top: 2px;
+            background: rgba(0, 174, 66, 0.15);
+            color: var(--bambu-green);
+            border: 1px solid rgba(0, 174, 66, 0.3);
+        }
+        .fit-pill.warning {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--danger);
+            border-color: rgba(248, 81, 73, 0.3);
+        }
+        .note-box {
+            background: rgba(0, 174, 66, 0.08);
+            border-left: 3px solid var(--bambu-green);
+            padding: 8px 10px;
+            font-size: 11px;
+            line-height: 1.4;
+            color: #d2fedb;
+            border-radius: 0 4px 4px 0;
+            margin-top: 12px;
+        }
+        .footer {
+            padding: 14px 18px;
+            border-top: 1px solid var(--border);
+            background: var(--bg-secondary);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .btn-main {
+            width: 100%;
+            padding: 10px;
+            background: var(--accent);
+            color: #121418;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+        .btn-main:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            width: 100%;
+            padding: 8px;
+            background: #0d1014;
+            color: var(--text-main);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+        .btn-secondary:hover {
+            border-color: var(--text-muted);
+            background: var(--bg-primary);
+        }
+        #viewport-container {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at center, #1e2430 0%, #0e1117 100%);
+        }
+        #canvas3d {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .floating-info {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: rgba(18, 20, 24, 0.85);
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            color: var(--text-muted);
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar Controls -->
+    <div id="sidebar">
+        <div class="header">
+            <h1>
+                <span>🐷</span>
+                Piggy Bank Customizer
+                <span class="badge" id="bedBadge">A1 Mini (180mm)</span>
+            </h1>
+            <div class="subtitle">Modular Parametric 3D Printing System</div>
+        </div>
+
+        <div class="content">
+            <!-- Preset Children -->
+            <div class="section-title">Children Presets</div>
+            <div class="preset-grid">
+                <button class="btn-preset active" onclick="applyPreset('SHIVANSH')">Shivansh</button>
+                <button class="btn-preset" onclick="applyPreset('LUVISH')">Luvish</button>
+                <button class="btn-preset" onclick="applyPreset('JANICE')">Janice</button>
+                <button class="btn-preset" onclick="applyPreset('NIVAAN')">Nivaan</button>
+            </div>
+
+            <!-- Custom Name Input -->
+            <div class="form-group">
+                <label>Child's Name / Custom Text</label>
+                <input type="text" id="inputName" value="SHIVANSH" oninput="onNameChange()" autocomplete="off">
+            </div>
+
+            <!-- Component Selector -->
+            <div class="section-title">Component View & Export</div>
+            <div class="form-group">
+                <select id="selectPart" onchange="update3DModel()">
+                    <option value="assembly" selected>Complete Assembly Preview</option>
+                    <option value="body">Main Body (Flat for Print Bed)</option>
+                    <option value="front_plate">Front Plate (with 3D Letters)</option>
+                    <option value="stopper">Twist & Lock Stopper Cap</option>
+                    <option value="stoppers_batch">4x Stoppers Batch (2x2 Grid)</option>
+                </select>
+            </div>
+
+            <!-- Printer Profile -->
+            <div class="form-group">
+                <label>Printer Bed Target</label>
+                <select id="selectProfile" onchange="onProfileChange()">
+                    <option value="A1_Mini" selected>Bambu Lab A1 Mini (180 × 180 mm)</option>
+                    <option value="Standard_256">Bambu X1 / P1S / A1 (256 × 256 mm)</option>
+                </select>
+            </div>
+
+            <!-- Parametric Sliders -->
+            <div class="section-title">Parametric Adjustments</div>
+            
+            <div class="form-group">
+                <label>Box Depth <span class="val" id="valDepth">45 mm</span></label>
+                <input type="range" id="inputDepth" min="30" max="70" step="1" value="45" oninput="update3DModel()">
+            </div>
+
+            <div class="form-group">
+                <label>Text Raise (Letter Pop-out) <span class="val" id="valRaise">3.0 mm</span></label>
+                <input type="range" id="inputRaise" min="1.0" max="6.0" step="0.5" value="3.0" oninput="update3DModel()">
+            </div>
+
+            <div class="form-group">
+                <label>Letter Casing</label>
+                <select id="selectCasing" onchange="onNameChange()">
+                    <option value="UPPERCASE" selected>UPPERCASE (Uniform Heights - No Dip on 'I')</option>
+                    <option value="As_Entered">Keep Exact Case As Entered</option>
+                </select>
+            </div>
+
+            <!-- Live Dimension Feedback -->
+            <div class="stats-card">
+                <div class="stats-item">
+                    <span>ESTIMATED WIDTH</span>
+                    <span id="statWidth">169.5 mm</span>
+                </div>
+                <div class="stats-item">
+                    <span>ESTIMATED HEIGHT</span>
+                    <span id="statHeight">50.0 mm</span>
+                </div>
+                <div class="stats-item">
+                    <span>TOTAL DEPTH</span>
+                    <span id="statDepth">45.0 mm</span>
+                </div>
+                <div class="stats-item">
+                    <span>COIN SLOT</span>
+                    <span>32.0 × 4.2 mm</span>
+                </div>
+                <div class="fit-pill" id="fitPill">✓ 100% Fits A1 Mini (10.5 mm Bed Margin)</div>
+            </div>
+
+            <!-- Slicing Pro-Tip -->
+            <div class="note-box">
+                <strong>💡 Bambu Studio Print Settings:</strong><br>
+                • <strong>Zero Supports:</strong> Body & Front Plate print with 0 supports.<br>
+                • <strong>2-Color Text without AMS:</strong> Slice front plate at 0.20mm and add a <strong>Pause at Layer 14 (2.60mm)</strong> to swap filament colors for the raised letters!
+            </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="footer">
+            <button class="btn-main" onclick="downloadSTL()">
+                <span>⬇️</span> Download STL File
+            </button>
+            <button class="btn-secondary" onclick="downloadSCAD()">
+                <span>📄</span> Export Configured OpenSCAD
+            </button>
+        </div>
+    </div>
+
+    <!-- 3D Canvas Viewport -->
+    <div id="viewport-container">
+        <canvas id="canvas3d"></canvas>
+        <div class="floating-info">
+            Left Click: Rotate | Right Click: Pan | Scroll: Zoom
+        </div>
+    </div>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let modelGroup, bedGrid, bedOutline;
+
+        const KNOWN_PRESETS = ["SHIVANSH", "LUVISH", "JANICE", "NIVAAN"];
+
+        function init3D() {
+            const container = document.getElementById('viewport-container');
+            const canvas = document.getElementById('canvas3d');
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 1, 1000);
+            camera.position.set(0, 90, 240);
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxPolarAngle = Math.PI / 2 + 0.1;
+
+            // Lighting
+            const ambient = new THREE.AmbientLight(0xffffff, 0.65);
+            scene.add(ambient);
+
+            const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+            keyLight.position.set(60, 120, 80);
+            keyLight.castShadow = true;
+            scene.add(keyLight);
+
+            const fillLight = new THREE.DirectionalLight(0xa5c4f5, 0.4);
+            fillLight.position.set(-60, 40, -60);
+            scene.add(fillLight);
+
+            createBuildPlate(180);
+
+            modelGroup = new THREE.Group();
+            scene.add(modelGroup);
+
+            window.addEventListener('resize', onWindowResize);
+            update3DModel();
+            animate();
+        }
+
+        function createBuildPlate(size) {
+            if (bedGrid) scene.remove(bedGrid);
+            if (bedOutline) scene.remove(bedOutline);
+
+            bedGrid = new THREE.GridHelper(size, size / 10, 0x3d4450, 0x222730);
+            bedGrid.position.y = -25;
+            scene.add(bedGrid);
+
+            const shape = new THREE.BufferGeometry();
+            const hs = size / 2;
+            const points = [
+                new THREE.Vector3(-hs, -25, -hs),
+                new THREE.Vector3( hs, -25, -hs),
+                new THREE.Vector3( hs, -25,  hs),
+                new THREE.Vector3(-hs, -25,  hs),
+                new THREE.Vector3(-hs, -25, -hs)
+            ];
+            shape.setFromPoints(points);
+            bedOutline = new THREE.Line(shape, new THREE.LineBasicMaterial({ color: 0x00ae42, linewidth: 2 }));
+            scene.add(bedOutline);
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('viewport-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function applyPreset(name) {
+            document.getElementById('inputName').value = name;
+            document.querySelectorAll('.btn-preset').forEach(btn => {
+                btn.classList.toggle('active', btn.innerText.toUpperCase() === name);
+            });
+            onNameChange();
+        }
+
+        function onNameChange() {
+            let val = document.getElementById('inputName').value.trim();
+            const casing = document.getElementById('selectCasing').value;
+            if (casing === "UPPERCASE") {
+                val = val.toUpperCase();
+                document.getElementById('inputName').value = val;
+            }
+            update3DModel();
+        }
+
+        function onProfileChange() {
+            const profile = document.getElementById('selectProfile').value;
+            const badge = document.getElementById('bedBadge');
+            const depthInput = document.getElementById('inputDepth');
+
+            if (profile === "A1_Mini") {
+                badge.innerText = "A1 Mini (180mm)";
+                depthInput.value = 45;
+                createBuildPlate(180);
+            } else {
+                badge.innerText = "Standard (256mm)";
+                depthInput.value = 60;
+                createBuildPlate(256);
+            }
+            update3DModel();
+        }
+
+        function update3DModel() {
+            const name = (document.getElementById('inputName').value.trim() || "PIGGY").toUpperCase();
+            const part = document.getElementById('selectPart').value;
+            const profile = document.getElementById('selectProfile').value;
+            const depth = parseFloat(document.getElementById('inputDepth').value);
+            const raise = parseFloat(document.getElementById('inputRaise').value);
+
+            document.getElementById('valDepth').innerText = depth + " mm";
+            document.getElementById('valRaise').innerText = raise.toFixed(1) + " mm";
+
+            // Clear existing meshes
+            while(modelGroup.children.length > 0) {
+                const obj = modelGroup.children[0];
+                if (obj.geometry) obj.geometry.dispose();
+                modelGroup.remove(obj);
+            }
+
+            // Parametric scaling formula
+            const maxBed = (profile === "A1_Mini") ? 180 : 256;
+            const textScale = (profile === "A1_Mini") ? Math.min(25.0, 130.0 / (0.75 * (name.length - 1) + 1.0)) : 50.0;
+            const bodyWidth = Math.max(90, (name.length * textScale * 0.75) + 36);
+            const bodyHeight = (profile === "A1_Mini") ? 50.0 : 68.0;
+
+            document.getElementById('statWidth').innerText = bodyWidth.toFixed(1) + " mm";
+            document.getElementById('statHeight').innerText = bodyHeight.toFixed(1) + " mm";
+            document.getElementById('statDepth').innerText = depth.toFixed(1) + " mm";
+
+            const margin = maxBed - bodyWidth;
+            const fitPill = document.getElementById('fitPill');
+            if (margin >= 0) {
+                fitPill.className = "fit-pill";
+                fitPill.innerText = `✓ 100% Fits ${profile === 'A1_Mini' ? 'A1 Mini' : 'Bed'} (${margin.toFixed(1)} mm Margin)`;
+            } else {
+                fitPill.className = "fit-pill warning";
+                fitPill.innerText = `⚠️ Exceeds Bed by ${Math.abs(margin).toFixed(1)} mm! Rotate 45°`;
+            }
+
+            // Material Palette
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.5, metalness: 0.1 });
+            const plateMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.35, metalness: 0.1 });
+            const letterMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.3, metalness: 0.2 });
+            const stopperMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, roughness: 0.4 });
+
+            if (part === "assembly" || part === "body") {
+                // Rounded outer box
+                const bodyGeo = new THREE.BoxGeometry(bodyWidth, bodyHeight, depth);
+                const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+                bodyMesh.position.set(0, 0, (part === "body") ? 0 : 0);
+                if (part === "body") {
+                    bodyMesh.rotation.x = -Math.PI / 2;
+                    bodyMesh.position.y = -25 + (depth / 2);
+                }
+                modelGroup.add(bodyMesh);
+
+                // Top coin slot
+                const slotGeo = new THREE.BoxGeometry(32, 4.2, 8);
+                const slotMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+                const slotMesh = new THREE.Mesh(slotGeo, slotMat);
+                if (part === "body") {
+                    slotMesh.rotation.x = -Math.PI / 2;
+                    slotMesh.position.set(0, -25 + (depth / 2), (bodyHeight / 2));
+                } else {
+                    slotMesh.position.set(0, bodyHeight / 2, 0);
+                }
+                modelGroup.add(slotMesh);
+            }
+
+            if (part === "assembly" || part === "front_plate") {
+                const plateThick = 2.5;
+                const plateW = bodyWidth - 4;
+                const plateH = bodyHeight - 4;
+                const plateGeo = new THREE.BoxGeometry(plateW, plateH, plateThick);
+                const plateMesh = new THREE.Mesh(plateGeo, plateMat);
+
+                if (part === "front_plate") {
+                    plateMesh.rotation.x = -Math.PI / 2;
+                    plateMesh.position.set(0, -25 + (plateThick / 2), 0);
+                } else {
+                    plateMesh.position.set(0, 0, (depth / 2) - (plateThick / 2));
+                }
+                modelGroup.add(plateMesh);
+
+                // Raised Text Indicator Blocks
+                const letterSpacing = (plateW - 20) / name.length;
+                for (let i = 0; i < name.length; i++) {
+                    const lGeo = new THREE.BoxGeometry(letterSpacing * 0.72, textScale * 0.78, raise);
+                    const lMesh = new THREE.Mesh(lGeo, letterMat);
+                    const xPos = (-plateW / 2) + 12 + (i * letterSpacing) + (letterSpacing * 0.36);
+                    if (part === "front_plate") {
+                        lMesh.rotation.x = -Math.PI / 2;
+                        lMesh.position.set(xPos, -25 + plateThick + (raise / 2), 0);
+                    } else {
+                        lMesh.position.set(xPos, 0, (depth / 2) + (raise / 2));
+                    }
+                    modelGroup.add(lMesh);
+                }
+            }
+
+            if (part === "stopper") {
+                const capGeo = new THREE.CylinderGeometry(19, 19, 3, 32);
+                const capMesh = new THREE.Mesh(capGeo, stopperMat);
+                capMesh.position.set(0, -25 + 1.5, 0);
+                modelGroup.add(capMesh);
+
+                const plugGeo = new THREE.CylinderGeometry(13, 13, 6, 32);
+                const plugMesh = new THREE.Mesh(plugGeo, stopperMat);
+                plugMesh.position.set(0, -25 + 4.5, 0);
+                modelGroup.add(plugMesh);
+            }
+
+            if (part === "stoppers_batch") {
+                for (let ix of [-25, 25]) {
+                    for (let iz of [-25, 25]) {
+                        const capGeo = new THREE.CylinderGeometry(19, 19, 3, 32);
+                        const capMesh = new THREE.Mesh(capGeo, stopperMat);
+                        capMesh.position.set(ix, -25 + 1.5, iz);
+                        modelGroup.add(capMesh);
+                    }
+                }
+            }
+        }
+
+        function downloadSTL() {
+            const name = (document.getElementById('inputName').value.trim() || "SHIVANSH").toUpperCase();
+            const part = document.getElementById('selectPart').value;
+
+            // 1. If it's one of the 4 verified presets and standard components, direct download tested binary STL:
+            if (KNOWN_PRESETS.includes(name) && (part === "body" || part === "front_plate" || part === "stopper" || part === "stoppers_batch")) {
+                let filename = "";
+                if (part === "body") filename = `${name.charAt(0) + name.slice(1).toLowerCase()}_Body.stl`;
+                else if (part === "front_plate") filename = `${name.charAt(0) + name.slice(1).toLowerCase()}_Front_Plate.stl`;
+                else if (part === "stopper") filename = "Stopper.stl";
+                else if (part === "stoppers_batch") filename = "Stoppers_Batch_x4.stl";
+
+                const link = document.createElement('a');
+                link.href = `./models/${filename}`;
+                link.download = filename;
+                link.click();
+                return;
+            }
+
+            // 2. Otherwise export current dynamic Three.js geometry via STLExporter:
+            const exporter = new THREE.STLExporter();
+            const result = exporter.parse(modelGroup, { binary: true });
+            const blob = new Blob([result], { type: 'application/octet-stream' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `PiggyBank_${name}_${part}.stl`;
+            link.click();
+        }
+
+        function downloadSCAD() {
+            const name = (document.getElementById('inputName').value.trim() || "SHIVANSH").toUpperCase();
+            const profile = document.getElementById('selectProfile').value;
+            const part = document.getElementById('selectPart').value;
+            const depth = document.getElementById('inputDepth').value;
+            const raise = document.getElementById('inputRaise').value;
+            const casing = document.getElementById('selectCasing').value;
+
+            const content = 
+`// ==============================================================================
+// Customized Parameters for Piggy Bank Generator
+// Generated by Piggy Bank Customizer WebApp (GitHub Pages)
+// ==============================================================================
+
+Child_Name = "${name}";
+Printer_Profile = "${profile}";
+export_part = "${part}";
+Box_Depth = ${depth};
+Text_Raise = ${raise};
+Letter_Casing = "${casing}";
+Spacing_Engine = "Proportional";
+
+// Include the master parametric engine:
+include <Piggy_Bank_Batch_Export.scad>;
+`;
+
+            const blob = new Blob([content], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `Piggy_Bank_${name}_${part}.scad`;
+            link.click();
+        }
+
+        window.onload = init3D;
+    </script>
+</body>
+</html>
